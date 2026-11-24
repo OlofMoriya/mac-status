@@ -519,6 +519,7 @@ fn brew_rows(
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args_os().skip(1);
     let (mut config, mut json, mut gui, mut gpui) = (None, false, false, false);
+    let mut install_launcher = false;
     while let Some(arg) = args.next() {
         match arg.to_str() {
             Some("--config") if config.is_none() => {
@@ -526,21 +527,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             Some("--json") => json = true,
             Some("--gui") => gui = true,
+            Some("--install-launcher") => install_launcher = true,
             Some("--gpui") => gpui = true,
             Some("--help" | "-h") => {
-                println!("Usage: mac-status --config PLAN.toml [--json | --gui]");
+                println!(
+                    "Usage: mac-status --config PLAN.toml [--json | --gui | --install-launcher]"
+                );
                 return Ok(());
             }
             _ => return Err("Usage: mac-status --config PLAN.toml [--json | --gui]".into()),
         }
     }
-    if [gui, gpui, json]
+    if [gui, gpui, json, install_launcher]
         .into_iter()
         .filter(|enabled| *enabled)
         .count()
         > 1
     {
-        return Err("--gui, --gpui and --json are mutually exclusive".into());
+        return Err("Choose only one output or launcher mode".into());
     }
     #[cfg(not(feature = "gpui"))]
     if gpui {
@@ -549,6 +553,26 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let config = config.ok_or("Specify --config PLAN.toml")?;
+    if install_launcher {
+        let exe = env::current_exe()?.canonicalize()?;
+        let binary = [
+            Path::new("/opt/homebrew/bin/mac-status"),
+            Path::new("/usr/local/bin/mac-status"),
+        ]
+        .into_iter()
+        .find(|p| p.canonicalize().ok().as_ref() == Some(&exe))
+        .unwrap_or(&exe);
+        let status = Command::new("/bin/bash")
+            .args(["-c", include_str!("install-launcher.sh"), "mac-status"])
+            .arg(env::current_dir()?.join(config))
+            .arg(binary)
+            .status()?;
+        return if status.success() {
+            Ok(())
+        } else {
+            Err(format!("Launcher installer exited with {status}").into())
+        };
+    }
     let home = PathBuf::from(env::var_os("HOME").ok_or("HOME is not set")?);
     let mut plan: Plan = toml::from_str(&fs::read_to_string(&config)?)?;
     let base = config.parent().unwrap_or(Path::new("."));
