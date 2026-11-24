@@ -46,6 +46,10 @@ enum Check {
         path: String,
         target: String,
     },
+    Workspace {
+        name: String,
+        path: String,
+    },
     Repo {
         name: String,
         path: String,
@@ -71,6 +75,8 @@ struct Status {
     detail: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     repo_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    children: Vec<Status>,
 }
 
 fn expand(path: &str, home: &Path, base: &Path) -> PathBuf {
@@ -85,6 +91,73 @@ fn expand(path: &str, home: &Path, base: &Path) -> PathBuf {
 
 fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
     let path = |s: &str| expand(s, home, base);
+    if let Check::Workspace {
+        name,
+        path: directory,
+    } = &check
+    {
+        let root = path(directory);
+        let scan = (|| -> std::io::Result<Vec<_>> {
+            let mut paths = Vec::new();
+            for entry in fs::read_dir(&root)? {
+                let entry = entry?;
+                let child = entry.path();
+                if !entry.file_name().to_string_lossy().starts_with('.')
+                    && child.join(".git").exists()
+                {
+                    paths.push(child);
+                }
+            }
+            paths.sort();
+            Ok(paths)
+        })();
+        let (state, detail, children) = match scan {
+            Err(error) => ("unavailable", error.to_string(), Vec::new()),
+            Ok(paths) => {
+                let children: Vec<_> = paths
+                    .into_iter()
+                    .map(|p| {
+                        evaluate(
+                            Check::Repo {
+                                name: p
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .into_owned(),
+                                path: p.to_string_lossy().into_owned(),
+                            },
+                            home,
+                            Path::new(""),
+                        )
+                    })
+                    .collect();
+                let clean = children.iter().filter(|r| r.state == "clean").count();
+                let total = children.len();
+                let state = if total == 0 {
+                    "no repos"
+                } else if clean == total {
+                    "clean"
+                } else {
+                    "needs review"
+                };
+                (
+                    state,
+                    format!(
+                        "{clean}/{total} clean and match last-fetched upstream · {directory} (no fetch)"
+                    ),
+                    children,
+                )
+            }
+        };
+        return Status {
+            section: "Workspace sync",
+            name: name.clone(),
+            state,
+            detail,
+            repo_path: None,
+            children,
+        };
+    }
     let presence = |present, optional| {
         if present {
             "present"
@@ -109,6 +182,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
         Check::Path { .. } => "Applications and files",
         Check::Link { .. } => "Dotfiles",
         Check::Repo { .. } => "Repositories",
+        Check::Workspace { .. } => unreachable!(),
         Check::Backup { .. } => "Backups",
         Check::Manual { .. } => "Manual checks",
     };
@@ -134,6 +208,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
                     Ok(out) if out.status.success() => {
                         return Status {
                             repo_path: None,
+                            children: Vec::new(),
                             section,
                             name,
                             state: "present",
@@ -150,6 +225,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
                     _ => {
                         return Status {
                             repo_path: None,
+                            children: Vec::new(),
                             section,
                             name,
                             state: "version check failed",
@@ -283,6 +359,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
             };
             (name, state, format!("{p} → {target}"))
         }
+        Check::Workspace { .. } => unreachable!(),
         Check::Repo { name, path: p } => {
             let local = path(&p);
             let git = |args: &[&str]| {
@@ -401,6 +478,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
     };
     Status {
         repo_path,
+        children: Vec::new(),
         section,
         name,
         state,
@@ -514,6 +592,7 @@ fn brew_rows(
         };
         rows.push(Status {
             repo_path: None,
+            children: Vec::new(),
             section: if group.is_some() {
                 "Optional installs"
             } else if kind == "cask" {
@@ -680,6 +759,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(("unknown", stage.trim()));
         rows.push(Status {
             repo_path: None,
+            children: Vec::new(),
             section: "Current setup run",
             name: "Guided setup".into(),
             state: match state {

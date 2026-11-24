@@ -80,6 +80,7 @@ pub fn show(rows: Vec<Status>) {
         let rows = if std::env::var_os("MAC_STATUS_GUI_PROBE").is_some() {
             vec![Status {
                 repo_path: None,
+                children: Vec::new(),
                 section: "GPUI text rendering probe",
                 name: "If you can read this, text renders".into(),
                 state: "present",

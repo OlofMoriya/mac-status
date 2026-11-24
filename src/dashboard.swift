@@ -8,11 +8,12 @@ struct Row: Decodable {
     let state: String
     let detail: String
     let repo_path: String?
+    let children: [Row]?
     var key: String { section + "\u{1F}" + name }
 
     var color: Color {
         switch state {
-        case "present", "configured", "clean", "recent", "matches lockfile": return .green
+        case "present", "configured", "clean", "recent", "matches lockfile", "no repos": return .green
         case "missing", "wrong target", "stale": return .red
         case "optional; not found", "manual check": return .secondary
         default: return .orange
@@ -23,11 +24,15 @@ struct Row: Decodable {
 final class Selection: ObservableObject {
     @Published var key: String?
     @Published var error: String?
+    @Published var workspace: String?
 }
 
 struct Dashboard: View {
     @ObservedObject var data: DashboardData
-    var rows: [Row] { data.rows }
+    var rows: [Row] {
+        guard let key = selection.workspace else { return data.rows }
+        return data.rows.first { $0.key == key }?.children ?? []
+    }
 
     @StateObject private var selection = Selection()
 
@@ -105,7 +110,12 @@ struct Dashboard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Mac Status").font(.title2.bold())
+                if let key = selection.workspace {
+                    Button("Back") { selection.workspace = nil; selection.key = key; selection.error = nil }
+                    Text(data.rows.first { $0.key == key }?.name ?? "Workspace").font(.title2.bold())
+                } else {
+                    Text("Mac Status").font(.title2.bold())
+                }
                 Spacer()
                 Text(data.message ?? "\(rows.count) checks · refreshes every 5s").foregroundStyle(.secondary)
             }
@@ -125,6 +135,9 @@ struct Dashboard: View {
                     HStack {
                         Text("\(row.name) · \(row.state)").font(.callout.bold())
                         Spacer()
+                        if let children = row.children, !children.isEmpty {
+                            Button("View repositories") { selection.workspace = row.key; selection.key = nil; selection.error = nil }
+                        }
                         if let repo = row.repo_path {
                             Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo)]) }
                             if let script = ProcessInfo.processInfo.environment["MAC_STATUS_SESSIONIZER"],
