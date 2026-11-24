@@ -7,6 +7,7 @@ struct Row: Decodable {
     let name: String
     let state: String
     let detail: String
+    let repo_path: String?
     var key: String { section + "\u{1F}" + name }
 
     var color: Color {
@@ -21,6 +22,7 @@ struct Row: Decodable {
 
 final class Selection: ObservableObject {
     @Published var key: String?
+    @Published var error: String?
 }
 
 struct Dashboard: View {
@@ -45,7 +47,7 @@ struct Dashboard: View {
                         .padding(.horizontal, 6).padding(.bottom, 3)
                     ForEach(block.indices, id: \.self) { index in
                         let row = rows[index]
-                        Button { selection.key = row.key } label: {
+                        Button { selection.key = row.key; selection.error = nil } label: {
                             HStack(spacing: 7) {
                                 Circle().fill(row.color).frame(width: 7, height: 7)
                                     .accessibilityHidden(true)
@@ -86,6 +88,20 @@ struct Dashboard: View {
         return result
     }
 
+    func openSession(_ repo: String, script: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-na", "Ghostty", "--args", "-e", "/usr/bin/env",
+                             "PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                             "/bin/bash", script, repo]
+        process.terminationHandler = { child in
+            if child.terminationStatus != 0 {
+                DispatchQueue.main.async { selection.error = "Could not launch Ghostty." }
+            }
+        }
+        do { try process.run() } catch { selection.error = error.localizedDescription }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -106,8 +122,18 @@ struct Dashboard: View {
             Divider()
             VStack(alignment: .leading, spacing: 4) {
                 if let row = rows.first(where: { $0.key == selection.key }) {
-                    Text("\(row.name) · \(row.state)").font(.callout.bold())
-                    ScrollView { Text(row.detail).font(.callout).textSelection(.enabled)
+                    HStack {
+                        Text("\(row.name) · \(row.state)").font(.callout.bold())
+                        Spacer()
+                        if let repo = row.repo_path {
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: repo)]) }
+                            if let script = ProcessInfo.processInfo.environment["MAC_STATUS_SESSIONIZER"],
+                               FileManager.default.isReadableFile(atPath: script) {
+                                Button("Open tmux in Ghostty") { openSession(repo, script: script) }
+                            }
+                        }
+                    }
+                    ScrollView { Text(selection.error ?? row.detail).font(.callout).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading) }
                 } else {
                     Text("Select a check to see its status and details.").foregroundStyle(.secondary)

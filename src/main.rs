@@ -12,6 +12,7 @@ use std::{
 struct Plan {
     checks: Vec<Check>,
     brewfile: Option<String>,
+    sessionizer: Option<String>,
     standalone_casks: Option<std::collections::BTreeMap<String, String>>,
     dotfiles: Option<String>,
     repo_list: Option<String>,
@@ -68,6 +69,8 @@ struct Status {
     name: String,
     state: &'static str,
     detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo_path: Option<PathBuf>,
 }
 
 fn expand(path: &str, home: &Path, base: &Path) -> PathBuf {
@@ -109,6 +112,10 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
         Check::Backup { .. } => "Backups",
         Check::Manual { .. } => "Manual checks",
     };
+    let repo_path = match &check {
+        Check::Repo { path: p, .. } if path(p).join(".git").exists() => Some(path(p)),
+        _ => None,
+    };
     let (name, state, detail) = match check {
         Check::Tool {
             name,
@@ -126,6 +133,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
                 match Command::new(bin).arg("--version").output() {
                     Ok(out) if out.status.success() => {
                         return Status {
+                            repo_path: None,
                             section,
                             name,
                             state: "present",
@@ -141,6 +149,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
                     }
                     _ => {
                         return Status {
+                            repo_path: None,
                             section,
                             name,
                             state: "version check failed",
@@ -391,6 +400,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
         Check::Manual { name, note } => (name, "manual check", note),
     };
     Status {
+        repo_path,
         section,
         name,
         state,
@@ -401,13 +411,18 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
 #[cfg(feature = "gpui")]
 mod gui;
 
-fn native_gui(rows: &[Status], config: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn native_gui(
+    rows: &[Status],
+    config: &Path,
+    sessionizer: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use std::io::Write;
     use std::process::Stdio;
 
     let data = serde_json::to_vec(rows)?;
     let mut child = Command::new("/usr/bin/swift")
         .args(["-e", include_str!("dashboard.swift")])
+        .env("MAC_STATUS_SESSIONIZER", sessionizer.unwrap_or_default())
         .env("MAC_STATUS_REFRESH_EXE", env::current_exe()?)
         .env(
             "MAC_STATUS_REFRESH_CONFIG",
@@ -498,6 +513,7 @@ fn brew_rows(
             None => "unavailable",
         };
         rows.push(Status {
+            repo_path: None,
             section: if group.is_some() {
                 "Optional installs"
             } else if kind == "cask" {
@@ -663,6 +679,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .split_once('\t')
             .unwrap_or(("unknown", stage.trim()));
         rows.push(Status {
+            repo_path: None,
             section: "Current setup run",
             name: "Guided setup".into(),
             state: match state {
@@ -676,7 +693,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     rows.sort_by_key(|row| row.section);
     if gui {
-        return native_gui(&rows, &config);
+        return native_gui(
+            &rows,
+            &config,
+            plan.sessionizer.as_deref().map(|s| expand(s, &home, base)),
+        );
     }
     #[cfg(feature = "gpui")]
     if gpui {
