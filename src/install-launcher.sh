@@ -17,6 +17,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>dev.mac-status.launcher</string>
 <key>CFBundleName</key><string>Mac Status</string>
+<key>CFBundleIconFile</key><string>AppIcon.icns</string>
 <key>CFBundleExecutable</key><string>launch</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
@@ -33,5 +34,7 @@ fi
 /usr/bin/osascript -e 'display alert "Mac Status could not start" message "Check the Homebrew install and rerun mac-status --config PLAN.toml --install-launcher."'
 LAUNCH
 chmod +x "$app/Contents/MacOS/launch"
+/bin/cat > "$app/Contents/Resources/AppIcon.icns"
+/usr/bin/touch "$app"
 /usr/bin/plutil -lint "$app/Contents/Info.plist"
 printf 'Launcher installed: %s\n' "$app"

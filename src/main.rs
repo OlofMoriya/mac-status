@@ -562,11 +562,23 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .find(|p| p.canonicalize().ok().as_ref() == Some(&exe))
         .unwrap_or(&exe);
-        let status = Command::new("/bin/bash")
+        use std::io::Write;
+        use std::process::Stdio;
+        let mut child = Command::new("/bin/bash")
             .args(["-c", include_str!("install-launcher.sh"), "mac-status"])
             .arg(env::current_dir()?.join(config))
             .arg(binary)
-            .status()?;
+            .stdin(Stdio::piped())
+            .spawn()?;
+        let written = child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(include_bytes!("AppIcon.icns"));
+        let status = child.wait()?;
+        if status.success() {
+            written?;
+        }
         return if status.success() {
             Ok(())
         } else {
