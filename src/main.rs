@@ -60,6 +60,7 @@ enum Check {
         prefix: String,
         max_age_days: u32,
         artifact: Option<String>,
+        skip_if_missing: Option<String>,
     },
     Manual {
         name: String,
@@ -409,6 +410,7 @@ fn evaluate(check: Check, home: &Path, base: &Path) -> Status {
             prefix,
             max_age_days,
             artifact,
+            ..
         } => {
             let result = (|| -> std::io::Result<Option<(SystemTime, String)>> {
                 let mut latest = None;
@@ -740,6 +742,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut rows: Vec<_> = plan
         .checks
         .into_iter()
+        .filter(|check| match check {
+            Check::Backup {
+                skip_if_missing: Some(source),
+                ..
+            } => !matches!(
+                fs::symlink_metadata(expand(source, &home, base)),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound
+            ),
+            _ => true,
+        })
         .map(|c| evaluate(c, &home, base))
         .collect();
     if let Some(file) = plan.brewfile {
